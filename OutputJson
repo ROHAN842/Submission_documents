@@ -1,0 +1,58 @@
+{
+  "Insured Information": {
+    "Named Insured (Company Name)": "Sunflower Hotel Group LLC",
+    "Organization Name": "Armstrong and Company",
+    "Organization Type": "LLC",
+    "Name and Mailing Address": "Sunflower Hotel Group LLC, 100 Harbor View Drive, Seabreeze, Daytona Beach, FL 32118, USA"
+  },
+  "Broker/Producer Information": {
+    "Broker Name": "Olivia Park",
+    "Broker Email": "olivia.park@meridianship.com",
+    "Broker Phone": "+1 (555) 214-7802",
+    "Producer Code": "100-002541"
+  },
+  "Property Location": {
+    "Address Line 1": "100 Harbor View Drive",
+    "City": "Seabreeze",
+    "State": "Florida",
+    "Zip Code": "32118",
+    "Country": "USA"
+  },
+  "Property Details": {
+    "Primary Use": "full-service resort: accommodation, F&B, banquet/meeting, spa, fitness, retail, limited marina services",
+    "Address Type": "Business",
+    "Year Constructed": "2008",
+    "Number of Floors": "8",
+    "Number of Guest Rooms": "240",
+    "Site Area (acres)": "4.2",
+    "Building Area (sq ft)": "Not Found",
+    "Primary Construction Type": "reinforced concrete and structural steel frame with masonry exterior finish",
+    "Roof Type": "Built-up membrane roof system, partial overlay in 2019",
+    "Property Description": "The property is an eight-story, full-service resort constructed in 2008 with a reinforced concrete and structural steel frame and masonry exterior finish. It features concrete slab-on-grade and reinforced concrete floor decks, and a built-up membrane roofing system (partial overlay in 2019). The site spans 4.2 acres with landscaped areas, two outdoor pools, spa and fitness facilities, paved driveways, walkways, and a private dock with eight guest berths. Mechanical rooms, storage, and service corridors are located in the lower levels, with no guest rooms below grade. The resort contains 240 guest rooms (standard, one- and two-bedroom, and executive suites), three restaurants, two bars, banquet/meeting facilities, spa, fitness center, retail concessions, and limited marina services. Amenities include pool decks, paved driveways and drop-off, landscaped open spaces, and a private dock. The property has 24/7 on-site security, two passenger elevators and one service elevator, addressable fire alarm panel with central station monitoring, commercial kitchen hood suppression systems, and ADA egress provisions."
+  },
+  "Property Contacts": {
+    "Property Contact": "Marcus Reyes - General Manager, Cruise Resort",
+    "Property Email": "m.reyes@cruiseresort.com",
+    "Property Phone": "+1 (555) 321-4400"
+  },
+  "Coverage Details": {
+    "Line of Business": "Commercial Property",
+    "Term Type": "Annual",
+    "Effective Date": "01/01/2026",
+    "Expiration Date": "01/01/2027",
+    "Valuation": "Replacement Cost",
+    "Coverage Currency": "USD",
+    "Settlement Currency": "USD",
+    "Limit of Liability": "$6,750,000",
+    "Total Insured Value (TIV)": "$100,000,000",
+    "Contents/FF&E Value": "$15,000,000",
+    "Underwriting Company": "Acme Low Hazard Insurance"
+  },
+  "Protection and Safety": {
+    "Fire Protection": "Full wet-pipe automatic sprinkler system throughout guest and public areas; addressable fire alarm panel with central station monitoring; on-site fire pump; two hydrants within 100 feet of the building; quarterly and annual test logs maintained. Kitchen fire protection: commercial kitchen hood suppression systems with regular servicing documented. Life-safety: emergency lighting, illuminated exit signage, ADA egress provisions, evacuation plans posted. Preventive maintenance and life-safety testing: quarterly sprinklers, annual fire pump, monthly fire alarm tests, annual full alarm inspection with vendor certificates on file.",
+    "Plumbing": "Domestic hot water plant and booster pumps; backflow prevention devices installed"
+  },
+  "Other": {
+    "Class Code": "Not Found"
+  }
+}
