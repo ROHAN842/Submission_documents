@@ -1,0 +1,150 @@
+-- Below insert query will be used for commercial property documents with guidewire for cases like (Sunflower hotel group and orion electronics) with guidewire attributes in it
+
+-- INSERT INTO ref_prompt_library (document_type, prompt, extraction_rules)
+-- VALUES 
+-- (
+--   'Submission_Document',
+--   'You are an expert commercial property insurance underwriter assistant.
+
+-- Your task is to extract structured underwriting data from submission documents provided by various brokers.
+
+-- The layout, terminology, and formatting may vary across documents.
+
+-- ATTRIBUTE: {attribute}
+
+-- INSTRUCTIONS FOR EXTRACTION:
+-- {instruction}
+
+-- RESPONSE FORMAT:
+
+-- {"amount": "VALUE"}
+
+-- CONTEXT:
+-- {context}
+
+-- If any field is not found in the provided context, return {"amount": null}.
+
+-- Do not guess values not supported by the text.',
+--   '{
+--   "Named Insured (Company Name)": {
+--     "description": "Legal name of the insured entity to be covered under the policy."
+--   },
+--   "Address Line 1": {
+--     "description": "Primary street address of the insured property or entity."
+--   },
+--   "City": {
+--     "description": "City where the insured property or entity is located."
+--   },
+--   "State": {
+--     "description": "State or province of the insured location."
+--   },
+--   "Zip Code": {
+--     "description": "Postal/ZIP code of the insured property or entity."
+--   },
+--   "Country": {
+--     "description": "Country in which the insured property or entity is located."
+--   },
+--   "Address Type": {
+--     "description": "Classification of the address (e.g., Business, Mailing)."
+--   },
+--   "Organization Name": {
+--     "description": "Name of the broker or submitting organization."
+--   },
+--   "Producer Code": {
+--     "description": "Unique code identifying the broker/producer submitting the risk."
+--   },
+--   "Line of Business": {
+--     "description": "Insurance line being requested (e.g., Commercial Property)."
+--   },
+--   "Term Type": {
+--     "description": "Duration or structure of the policy term (e.g., Annual)."
+--   },
+--   "Effective Date": {
+--     "description": "Start date of the policy period."
+--   },
+--   "Expiration Date": {
+--     "description": "End date of the policy period."
+--   },
+--   "Organization Type": {
+--     "description": "Legal structure of the insured entity (e.g., LLC, Corporation)."
+--   },
+--   "Underwriting Company": {
+--     "description": "Insurance company or carrier underwriting the submission."
+--   },
+--   "Coverage Currency": {
+--     "description": "Currency in which coverage values and limits are expressed."
+--   },
+--   "Settlement Currency": {
+--     "description": "Currency in which claims or settlements will be paid."
+--   },
+--   "Class Code": {
+--     "description": "Classification code used for underwriting or rating the property."
+--   },
+--   "Property Description": {
+--     "description": "Narrative description of building characteristics, use, and amenities."
+--   },
+--   "Year Constructed": {
+--     "description": "Original construction year of the primary building."
+--   },
+--   "Building Area (sq ft)": {
+--     "description": "Total square footage of the building."
+--   },
+--   "Limit of Liability": {
+--     "description": "Maximum amount the insurer will pay for covered losses."
+--   },
+--   "Valuation": {
+--     "description": "Method used to determine the value of the insured property (e.g., Replacement Cost)."
+--   },
+--   "Total Insured Value (TIV)": {
+--     "description": "Sum of all insured property values including buildings, contents, and other structures."
+--   },
+--   "Contents/FF&E Value": {
+--     "description": "Value of furniture, fixtures, equipment, and contents within the property."
+--   },
+--   "Number of Floors": {
+--     "description": "Total number of stories in the building."
+--   },
+--   "Number of Guest Rooms": {
+--     "description": "Total number of guest rooms within the insured property, if applicable."
+--   },
+--   "Primary Construction Type": {
+--     "description": "Main structural materials and construction type of the building."
+--   },
+--   "Roof Type": {
+--     "description": "Type of roofing system and year of latest major update."
+--   },
+--   "Site Area (acres)": {
+--     "description": "Total acreage of the insured property site."
+--   },
+--   "Broker Name": {
+--     "description": "Name of the broker responsible for submitting the underwriting package."
+--   },
+--   "Name and Mailing Address": {
+--     "description": "Full legal name of the insured along with the complete mailing address provided in the submission."
+--   },
+--   "Primary Use": {
+--     "description": "The primary operational use or occupancy of the property such as lodging, F&B, events, and related services."
+--   },
+--   "Plumbing": {
+--     "description": "Summary of plumbing systems including domestic hot water plant, booster pumps, and backflow prevention details."
+--   },
+--   "Fire Protection": {
+--     "description": "Description of fire protection systems including sprinklers, alarms, fire pumps, and monitoring."
+--   },
+--   "Broker Email": {
+--     "description": "Email address of the broker contact listed in the submission."
+--   },
+--   "Broker Phone": {
+--     "description": "Telephone number of the broker contact listed in the submission."
+--   },
+--   "Property Contact": {
+--     "description": "Primary on-site property contact person responsible for operations or management."
+--   },
+--   "Property Email": {
+--     "description": "Email address of the on-site property contact."
+--   },
+--   "Property Phone": {
+--     "description": "Telephone number of the on-site property contact."
+--   }
+-- }'::jsonb
+-- );
