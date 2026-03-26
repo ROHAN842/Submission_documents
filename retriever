@@ -1,0 +1,544 @@
+import os
+import json
+import logging
+from typing import Dict, Any, List, Optional
+from dotenv import load_dotenv
+from langchain.chains import LLMChain
+# from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
+# from langchain_community.chat_models import AzureChatOpenAI
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
+# from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
+# from langchain_community.embeddings import AzureOpenAIEmbeddings
+from azure.storage.blob import BlobServiceClient, ContainerClient
+from azure.core.exceptions import ResourceExistsError
+import re
+from datetime import datetime
+from urllib.parse import urlparse, unquote
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ==================== DATABASE CONFIGURATION ====================
+class PostgreSQLPromptManager:
+    """Manages dynamic prompt fetching from PostgreSQL"""
+    
+    def __init__(self):
+        self.connection_params = {
+            "host": os.getenv("PGHOST", "jarvis-uw.postgres.database.azure.com"),
+            "port": int(os.getenv("PGPORT", "5432")),
+            "database": os.getenv("PGDATABASE", "postgres"),
+            "user": os.getenv("PGUSER", "Jarvisuwadmin"),
+            "password": os.getenv("PGPASSWORD", "Uwpassword!2025")
+        }
+
+       
+    
+    def get_connection(self):
+        """Establish database connection"""
+        try:
+            conn = psycopg2.connect(**self.connection_params)
+            return conn
+        except Exception as e:
+            logger.error(f"❌ Database connection failed: {str(e)}")
+            return None
+    
+    def get_prompt_and_extraction_rules(self, document_type: str) -> Optional[Dict]:
+        """
+        Fetch prompt and extraction rules from database by document type using SQL query.
+        
+        Query: SELECT prompt, extraction_rules FROM ref_prompt_library WHERE document_type = ?
+        
+        Args:
+            document_type: Document type name (e.g., 'quote', 'acord', 'inspection_report')
+        
+        Returns:
+            Dictionary with 'prompt' and 'extraction_rules' keys, or None if not found
+        """
+        conn = self.get_connection()
+        if not conn:
+            logger.warning(f"⚠️  No database connection - cannot fetch data for {document_type}")
+            return None
+        
+        try:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            # Single SQL query to fetch both prompt and extraction rules
+            query = """
+            SELECT prompt, extraction_rules 
+            FROM ref_prompt_library 
+            WHERE LOWER(document_type) = LOWER(%s)
+            LIMIT 1
+            """
+            cur.execute(query, (document_type,))
+            result = cur.fetchone()
+            
+            if result and result['prompt']:
+                logger.info(f"✅ Fetched prompt and extraction rules for document type: {document_type}")
+                # Parse extraction_rules JSON string from database into Python dict
+                extraction_rules = {}
+                if result['extraction_rules']:
+                    try:
+                        if isinstance(result['extraction_rules'], str):
+                            extraction_rules = json.loads(result['extraction_rules'])
+                        else:
+                            extraction_rules = result['extraction_rules']
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"⚠️  Failed to parse extraction_rules JSON: {str(e)}")
+                        extraction_rules = {}
+                
+                return {
+                    'prompt': result['prompt'],
+                    'extraction_rules': extraction_rules
+                }
+            else:
+                logger.warning(f"⚠️  No data found for document type: {document_type}")
+                return None
+        except Exception as e:
+            logger.error(f"❌ Error fetching prompt and rules: {str(e)}")
+            return None
+        finally:
+            if conn:
+                conn.close()
+
+
+# Initialize PostgreSQL prompt manager
+prompt_manager = PostgreSQLPromptManager()
+
+# ==================== DEFAULT FALLBACK PROMPT ====================
+# NOTE: This prompt is NOT currently used in the implementation.
+# All extraction is done using the SQL query prompt from PostgreSQL database.
+# Keeping this for reference only - can be enabled in future if fallback is needed.
+# DEFAULT_EXTRACTION_PROMPT = """You are an expert commercial property insurance underwriter assistant.
+# 
+# Your task is to extract structured underwriting data from submission documents provided by various brokers.
+# 
+# The layout, terminology, and formatting may vary across documents.
+# 
+# ATTRIBUTE: {attribute}
+# 
+# INSTRUCTIONS FOR EXTRACTION:
+# {instruction}
+# 
+# RESPONSE FORMAT:
+# 
+# {{"amount": "VALUE"}}
+# 
+# CONTEXT:
+# {context}
+# 
+# If any field is not found in the provided context, return {{"amount": null}}.
+# 
+# Do not guess values not supported by the text.
+# """
+
+# Initialize Azure OpenAI embeddings
+embeddings = AzureOpenAIEmbeddings(
+    azure_deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"),
+    openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    chunk_size=1024
+)
+
+
+def group_attributes_by_category(attributes_dict: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Group extracted attributes into logical categories using LLM-based semantic categorization.
+    
+    Dynamically analyzes extracted underwriting attributes and groups them into semantic categories
+    based on context, without relying on hardcoded keyword mappings.
+    
+    The LLM determines the most logical grouping based on the specific fields present in the document.
+    """
+    
+    llm = AzureChatOpenAI(
+        openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
+        temperature=0,
+        top_p=1
+    )
+    
+    # Create the dynamic categorization prompt
+    grouping_prompt = PromptTemplate(
+        input_variables=["attributes_json"],
+        template="""You are a JSON data formatter for insurance underwriting documents.
+
+The following JSON contains extracted attributes from a non-ACORD insurance submission form.
+These fields were extracted using semantic search and LLM-based information retrieval from submission documents.
+
+Your task is to group these fields logically based on semantic context.
+
+Requirements:
+1. Group fields logically. The grouping is FLEXIBLE — create categories as needed based on the context of the fields present.
+
+2. Analyze the semantic meaning of each attribute name and value to determine the best category fit.
+
+3. Each attribute should appear in exactly one category.
+
+4. If an attribute doesn't fit standard categories, place it in "Other".
+
+5. Do NOT create empty categories.
+
+INPUT ATTRIBUTES (extracted from non-ACORD submission form):
+{attributes_json}
+
+TASK:
+1. Analyze each attribute name and value semantically
+2. Identify groupings based on contextual meaning (e.g., "Named insured" → Insured category, "Year built" → Property category)
+3. Group all semantically related attributes together
+4. Create category names that are meaningful and clear for insurance underwriting context
+5. Preserve exact attribute names and values as provided
+
+RESPONSE FORMAT (STRICT JSON ONLY):
+Return ONLY valid JSON with this structure - no commentary, no markdown, no explanations:
+{{
+  "Category Name 1": {{
+    "attribute_name_1": "value_1",
+    "attribute_name_2": "value_2"
+  }},
+  "Category Name 2": {{
+    "attribute_name_3": "value_3"
+  }},
+  "Other": {{
+    "attribute_name_4": "value_4"
+  }}
+}}
+
+CRITICAL RULES:
+- Return ONLY the JSON object, nothing else
+- Preserve exact attribute names (do NOT modify them)
+- Preserve exact values (do NOT modify them)
+- Category names should be descriptive and capitalized
+- Ensure ALL attributes from input are included in output in exactly one category
+- If no clear category fit, use "Other" category
+"""
+    )
+    
+    chain = LLMChain(llm=llm, prompt=grouping_prompt)
+    
+    try:
+        # Convert attributes dict to JSON string for the prompt
+        attributes_json = json.dumps(attributes_dict, indent=2)
+        
+        print("🧠 Grouping attributes using LLM semantic analysis...")
+        
+        # Get categorization from LLM
+        raw_response = chain.run({
+            "attributes_json": attributes_json
+        }).strip()
+        
+        # Parse the JSON response
+        try:
+            # Remove markdown code blocks if present
+            clean_response = re.sub(r"```(?:json)?|```", "", raw_response.strip())
+            grouped_data = json.loads(clean_response)
+            
+            # Validate the response
+            if isinstance(grouped_data, dict) and len(grouped_data) > 0:
+                # Ensure all categories contain dictionaries with content
+                cleaned_grouped = {}
+                for category, fields in grouped_data.items():
+                    if isinstance(fields, dict) and len(fields) > 0:
+                        cleaned_grouped[category] = fields
+                
+                if cleaned_grouped:
+                    print(f"✅ Successfully grouped attributes into {len(cleaned_grouped)} categories")
+                    return cleaned_grouped
+                else:
+                    logger.warning("No valid grouped data received from LLM, using flat structure")
+                    return {"All Attributes": attributes_dict}
+            else:
+                logger.warning("Invalid grouped data structure from LLM, using flat structure")
+                return {"All Attributes": attributes_dict}
+                
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.warning(f"Could not parse grouping response from LLM: {raw_response}")
+            logger.warning(f"Error details: {e}")
+            # Fallback to flat structure
+            return {"All Attributes": attributes_dict}
+            
+    except Exception as e:
+        logger.error(f"Error in LLM-based attribute grouping: {e}")
+        # Fallback to flat structure
+        return {"All Attributes": attributes_dict}
+
+
+def extract_with_llm(vectordb: Any, extraction_rules: Dict[str, Dict], prompt_template: str) -> Dict[str, Any]:
+    """Extract values from vectorized content using semantic search with database-driven extraction rules
+    
+    Args:
+        vectordb: ChromaDB instance with embeddings
+        extraction_rules: Dictionary mapping attribute names to their extraction instructions
+                         Format: {"attr_name": {"description": "instruction text"}, ...}
+        prompt_template: Prompt template string fetched from database
+    
+    Returns:
+        Dictionary mapping attributes to extracted values
+    """
+    print(f"🔎 Extracting values using semantic search with database-driven rules...")
+    
+    llm = AzureChatOpenAI(
+        openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
+        temperature=0,
+        top_p=1
+    )
+
+    # Create prompt template from database content
+    # CRITICAL: Escape the JSON response format in the prompt so LangChain doesn't interpret braces as variables
+    # The database stores: {\"amount\": \"VALUE\"} and {\"amount\": null}
+    # We need to escape to: {{\"amount\": \"VALUE\"}} and {{\"amount\": null}}
+    escaped_template = prompt_template.replace(
+        '{\"amount\": \"VALUE\"}', 
+        '{{\"amount\": \"VALUE\"}}'
+    ).replace(
+        '{\"amount\": null}', 
+        '{{\"amount\": null}}'
+    )
+    
+    attribute_prompt = PromptTemplate(
+        input_variables=["context", "attribute", "instruction"],
+        template=escaped_template
+    )
+    chain = LLMChain(llm=llm, prompt=attribute_prompt)
+    attribute_values = {}
+    
+    # Iterate over extraction_rules dictionary: attribute_name -> attribute_info
+    for attribute_name, attribute_info in extraction_rules.items():
+        # Extract the instruction/description from the attribute info
+        instruction = attribute_info.get("description", "") if isinstance(attribute_info, dict) else ""
+        
+        print(f"🧠 Extracting: {attribute_name}")
+        
+        # Get focused search terms based on attribute type
+        search_terms = {
+            "abcd": "example terms"
+        }
+        
+        # Build comprehensive search query
+        search_query = attribute_name
+        for key, terms in search_terms.items():
+            if key in attribute_name.lower():
+                search_query = f"{attribute_name} {terms}"
+                break
+                
+        # Get relevant chunks with larger k value
+        relevant_chunks = vectordb.similarity_search(
+            search_query,
+            k=15 # Significantly increased for better context
+        )
+        
+        if not relevant_chunks:
+            attribute_values[attribute_name] = "Not Found"
+            continue
+
+        # Combine relevant chunks
+        context = "\n".join([chunk.page_content for chunk in relevant_chunks])
+        
+        try:
+            raw_response = chain.run({
+                "context": context,
+                "attribute": attribute_name,
+                "instruction": instruction
+            }).strip()
+            
+            # Parse the JSON response to extract the actual value
+            try:
+                # Remove markdown code blocks if present
+                clean_response = re.sub(r"```(?:json)?|```", "", raw_response.strip())
+                parsed_response = json.loads(clean_response)
+                value = parsed_response.get("amount", "Not Found")
+                
+                # Handle null values
+                if value is None:
+                    value = "Not Found"
+                else:
+                    value = str(value).strip()
+                
+                # Only keep non-empty values
+                if value and value.lower() not in ["not found", "not provided", "n/a", ""]:
+                    attribute_values[attribute_name] = value
+                else:
+                    attribute_values[attribute_name] = "Not Found"
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                logger.warning(f"Could not parse JSON response for {attribute_name}: {raw_response}")
+                attribute_values[attribute_name] = "Not Found"
+                
+        except Exception as e:
+            logger.error(f"Error extracting {attribute_name}: {e}")
+            attribute_values[attribute_name] = "Not Found"
+
+    return attribute_values
+
+def _get_container_client_for_output(output_container_name: str) -> ContainerClient:
+    """Get container client for uploading outputs"""
+    connection_string = os.getenv("AZURE_BLOB_CONNECTION_STRING") or os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+
+    if connection_string:
+        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        return blob_service_client.get_container_client(output_container_name)
+
+    raise RuntimeError("No Azure Blob connection string found for uploading output")
+
+
+def _upload_bytes_to_container(container_client: ContainerClient, blob_name: str, data: bytes) -> str:
+    """Upload bytes to blob container and return URL"""
+    try:
+        container_client.create_container()
+    except ResourceExistsError:
+        pass
+    except Exception:
+        pass
+
+    blob_client = container_client.get_blob_client(blob_name)
+    blob_client.upload_blob(data, overwrite=True)
+    return blob_client.url
+
+
+async def process_retrieval(vector_db_path: str, document_type: str) -> Dict[str, Any]:
+    """Main processing function for retrieval using semantic search with database-driven prompts
+    
+    This function:
+    1. Fetches prompt and extraction rules from PostgreSQL based on document_type
+    2. Loads the vector database from vector_db_path
+    3. Extracts values for each attribute in extraction_rules using semantic search
+    4. Groups results by category from the extraction rules
+    5. Uploads results to blob storage
+    
+    Args:
+        vector_db_path: Can be either:
+            1. Local absolute path from pdf_vectorizer output: /home/jarvis/rohan/Quote_Extraction_MCP/data/vec_db/pdf_name
+            2. Blob URL (fallback): https://... - will extract pdf name and construct local path
+        document_type: Document type for database lookup (e.g., 'Property_Detailed_Report', 'quote', 'acord')
+                      Uses this to fetch prompt and extraction rules from ref_prompt_library table
+    
+    Returns:
+        Dict with extraction results and metadata
+    """
+    try:
+        # Fetch prompt and extraction rules from database based on document type
+        logger.info(f"📊 Fetching prompt and extraction rules for document type: {document_type}")
+        db_data = prompt_manager.get_prompt_and_extraction_rules(document_type)
+        
+        if not db_data:
+            logger.warning(f"⚠️  Could not fetch data for {document_type} from database")
+            return {
+                "error": f"No data found in database for document type: {document_type}",
+                "document_type": document_type
+            }
+        
+        prompt_template = db_data['prompt']
+        extraction_rules = db_data['extraction_rules']
+        
+        if not extraction_rules:
+            logger.warning(f"⚠️  No extraction rules found for {document_type}")
+            return {
+                "error": f"No extraction rules found for document type: {document_type}",
+                "document_type": document_type
+            }
+        
+        logger.info(f"✅ Loaded {len(extraction_rules)} extraction rules from database")
+        
+        # Handle both blob URLs and local paths
+        if vector_db_path.startswith(("http://", "https://")):
+            # This is a blob URL - extract the PDF name and construct local path
+            logger.warning(f"Received blob URL instead of local path. Extracting PDF name...")
+            path = unquote(urlparse(vector_db_path).path)
+            file_name_with_ext = os.path.basename(path)
+            pdf_name = os.path.splitext(file_name_with_ext)[0]
+            
+            # Construct the local vector_db_path
+            vdb_base_path = os.getenv("VDB_PATH", "./data/vec_db")
+            vector_db_path = os.path.abspath(os.path.join(vdb_base_path, pdf_name))
+            logger.info(f"Reconstructed local vector_db_path: {vector_db_path}")
+        else:
+            # Ensure it's an absolute path
+            vector_db_path = os.path.abspath(vector_db_path)
+        
+        # Get safe collection name from vector_db_path
+        # Remove all invalid characters: parentheses, brackets, special chars
+        # ChromaDB only allows: [a-zA-Z0-9._-]
+        safe_name = os.path.basename(vector_db_path).lower()
+        safe_name = safe_name.replace(" ", "_").replace("-", "_").replace(".", "_")
+        # Remove parentheses and other special characters
+        safe_name = "".join(c if c.isalnum() or c in "._-" else "" for c in safe_name)
+        # Ensure it starts and ends with alphanumeric
+        safe_name = safe_name.strip("._-")
+        collection_name = f"{safe_name}_collection"
+        persist_directory = os.path.join(vector_db_path, "chroma_db", safe_name)
+        
+        # Verify the vector DB exists
+        if not os.path.exists(persist_directory):
+            raise FileNotFoundError(f"Vector database not found at: {persist_directory}")
+        
+        # Load the vector store
+        print(f"📚 Loading vector store from {persist_directory}")
+        vectordb = Chroma(
+            embedding_function=embeddings,
+            persist_directory=persist_directory,
+            collection_name=collection_name
+        )
+        
+        # Extract values using semantic search with database-driven extraction rules and prompt
+        extracted_data = extract_with_llm(vectordb, extraction_rules, prompt_template)
+        
+        # Group attributes by logical categories
+        grouped_data = group_attributes_by_category(extracted_data)
+        
+        # Create local directory for outputs using the vector_db_path parent
+        local_output_dir = os.path.abspath(os.path.join(os.path.dirname(vector_db_path), "extraction_outputs"))
+        os.makedirs(local_output_dir, exist_ok=True)
+        
+        # Save locally first
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_name = os.path.basename(vector_db_path)
+        local_filename = f"{pdf_name}_{document_type}_extraction_{timestamp}.json"
+        local_path = os.path.join(local_output_dir, local_filename)
+        
+        # Save JSON locally
+        with open(local_path, "w", encoding="utf-8") as f:
+            json.dump(grouped_data, f, indent=2)
+        print(f"💾 Saved local output to: {local_path}")
+        
+        # Upload results to blob storage
+        output_container = _get_container_client_for_output("output-results")
+        blob_name = local_filename
+        
+        json_data = json.dumps(grouped_data, indent=2).encode('utf-8')
+        output_url = _upload_bytes_to_container(output_container, blob_name, json_data)
+        
+        return {
+            "is_extracted": True,
+            "metadata": {
+                "is_extracted": True,
+                "is_error": False,
+                "error_message": None,
+                "output_blob_url": output_url,
+                "source_pdf": pdf_name,
+                "local_output_path": local_path,
+                "vector_db_path": vector_db_path
+            }
+        }
+        
+    except Exception as e:
+        logger.exception("Error in retrieval process")
+        return {
+            "is_extracted": False,
+            "metadata": {
+                "is_extracted": False,
+                "is_error": True,
+                "error_message": str(e),
+                "output_blob_url": None
+            }
+        }
