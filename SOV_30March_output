@@ -1,0 +1,79 @@
+{
+  "Insured Information": {
+    "Named Insured": "Not Found",
+    "DBA / Trade Name": "Not Found"
+  },
+  "Broker Information": {
+    "Requesting Broker": "Not Found",
+    "Broker Address": "Not Found",
+    "Broker License": "Not Found"
+  },
+  "Policy Information": {
+    "Policy Period": "Not Found",
+    "Inflation Guard": "Not Found",
+    "Valuation Basis": "Not Found",
+    "Insurance-to-Value Status": "Not Found"
+  },
+  "Location Information": {
+    "Location Number": "Not Found",
+    "Full Address": "Not Found",
+    "Property Address": "Not Found",
+    "Location Description / Occupancy": "Not Found"
+  },
+  "Property Details": {
+    "Construction Type": "Not Found",
+    "Year Built / Renovated": "Not Found",
+    "Number of Stories / Levels": "Not Found",
+    "Gross Building Area (Sq Ft)": "Not Found",
+    "Total Gross Building Area": "Not Found",
+    "Roof Type & Age": "Not Found",
+    "Building Code Compliance": "Not Found",
+    "Renovation Scope": "Not Found",
+    "Parking Capacity": "Not Found",
+    "Number of Guest Rooms": "Not Found",
+    "Spa & Fitness Area": "Not Found",
+    "F&B Outlets": "Not Found",
+    "Occupancy Type": "Not Found",
+    "Occupancy Rate": "Not Found",
+    "Average Daily Rate (ADR)": "Not Found"
+  },
+  "Protection and Safety": {
+    "Fire Alarm": "Not Found",
+    "Sprinkler System": "Not Found",
+    "Fire Protection (Non-Sprinkler)": "Not Found",
+    "Security System": "Not Found",
+    "Backup Power": "Not Found"
+  },
+  "Natural Hazard Information": {
+    "Wind Zone": "Not Found",
+    "Seismic Zone": "Not Found",
+    "FEMA Flood Zone": "Not Found",
+    "Flood Mitigation Details": "Not Found"
+  },
+  "Valuation and Limits": {
+    "Building RCV": "Not Found",
+    "Total Building RCV": "Not Found",
+    "BPP / Contents Value": "Not Found",
+    "Total BPP / Contents": "Not Found",
+    "Total Insured Value (TIV)": "Not Found",
+    "Grand Total TIV": "Not Found",
+    "Mortgage / Lienholder": "Not Found"
+  },
+  "Business Income and Financials": {
+    "Business Income / Extra Expense": "Not Found",
+    "Total BI / Extra Expense Limit": "Not Found",
+    "BI Indemnity Period": "Not Found",
+    "BI Extra Expense Sublimit": "Not Found",
+    "Annual Gross Revenue": "Not Found"
+  },
+  "Appraisal and SOV": {
+    "SOV Date": "Not Found",
+    "SOV Prepared By": "Not Found",
+    "Appraisal Date": "Not Found",
+    "Appraisal Provider": "Not Found"
+  },
+  "Other": {
+    "Prior Loss Note": "Not Found",
+    "Certification Signatory": "Not Found"
+  }
+}
