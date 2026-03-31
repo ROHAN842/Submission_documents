@@ -1,0 +1,304 @@
+import os
+import logging
+from typing import Dict, Any, List
+from unittest import result
+from dotenv import load_dotenv
+from azure.storage.blob import BlobClient, BlobServiceClient
+from azure.core.exceptions import AzureError
+from urllib.parse import urlparse, quote, unquote
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import AzureOpenAIEmbeddings
+# from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma  
+from langchain.schema import Document
+import tempfile
+from io import BytesIO
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Note: Document Intelligence client removed - now using raw text files from blob
+
+# Initialize Azure OpenAI embeddings
+embeddings = AzureOpenAIEmbeddings(
+    azure_deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"),
+    openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    chunk_size=1024  # Adding required chunk_size parameter
+)
+
+# Configure text splitter
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=int(os.getenv("CHUNK_SIZE", "800")),
+    chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "100")),
+    length_function=len,
+)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def _quote_path_only(url: str) -> str:
+    """Safely percent-encode only the path component of the URL."""
+    parsed = urlparse(url)
+    quoted_path = quote(parsed.path, safe="/")
+    return unquote(parsed.path)
+
+async def query_download_from_blob(blob_url: str) -> bytes:
+    """Download text file bytes from blob storage."""
+    if not blob_url or not blob_url.lower().startswith(("http://", "https://")):
+        raise ValueError("A full http(s) blob URL must be provided")
+
+    try:
+        # Try direct blob URL first (for public blobs or SAS URLs)
+        blob_client = BlobClient.from_blob_url(blob_url)
+        return blob_client.download_blob().readall()
+    except AzureError as e:
+        # Fall back to connection string if available
+        conn_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+        if not conn_str:
+            raise RuntimeError(f"Failed to download blob: {str(e)}")
+        
+        parsed = urlparse(blob_url)
+        path = unquote(parsed.path)
+        path_parts = [p for p in path.split("/") if p]
+        if len(path_parts) < 2:
+            raise RuntimeError("Invalid blob URL format")
+            
+        container_name = path_parts[0]
+        blob_name = "/".join(path_parts[1:])
+        
+        svc = BlobServiceClient.from_connection_string(conn_str)
+        blob_client = svc.get_blob_client(container=container_name, blob=blob_name)
+        return blob_client.download_blob().readall()
+
+
+
+def query_extract_text_from_txt(text_bytes: bytes) -> str:
+    """Extract text from TXT file downloaded from blob storage.
+    
+    Simply decodes the bytes to UTF-8 string since the file is already in text format.
+    
+    Args:
+        text_bytes: Raw bytes from .txt file
+        
+    Returns:
+        Decoded text string
+    """
+    try:
+        text = text_bytes.decode('utf-8')
+        logger.info(f"Successfully decoded text file: {len(text)} characters")
+        print(text)
+        return text
+    except UnicodeDecodeError as e:
+        logger.error(f"Error decoding text file: {str(e)}")
+        raise ValueError(f"Failed to decode text file: {str(e)}")
+       
+
+
+
+
+
+
+
+def query_chunk_and_embed(text: str, vector_db_path: str) -> bool:
+    """Chunk text and create vector embeddings in ChromaDB."""
+    try:
+        # Create document and split into chunks
+        doc = Document(page_content=text)
+        chunks = text_splitter.split_documents([doc])
+        
+        # Get safe collection name from vector_db_path
+        # Remove all invalid characters: parentheses, brackets, special chars
+        # ChromaDB only allows: [a-zA-Z0-9._-]
+        safe_name = os.path.basename(vector_db_path).lower()
+        safe_name = safe_name.replace(" ", "_").replace("-", "_").replace(".", "_")
+        # Remove parentheses and other special characters
+        safe_name = "".join(c if c.isalnum() or c in "._-" else "" for c in safe_name)
+        # Ensure it starts and ends with alphanumeric
+        safe_name = safe_name.strip("._-")
+        collection_name = f"{safe_name}_collection"
+        persist_directory = os.path.join(vector_db_path, "chroma_db", safe_name)
+        
+        # Create ChromaDB instance and store chunks
+        vectordb = Chroma.from_documents(
+            chunks,
+            embedding=embeddings,
+            persist_directory=persist_directory,
+            collection_name=collection_name
+        )
+
+#            - For each chunk, generate vector using Azure OpenAI embeddings
+#    - Store in ChromaDB with collection name
+#    - Save to disk at `persist_directory`
+#    - `persist()` ensures data survives restarts
+        
+        # Verify we can create a retriever (validates the DB was created properly)
+        retriever = Chroma(
+            embedding_function=embeddings,
+            persist_directory=persist_directory,
+            collection_name=collection_name
+        ).as_retriever()
+
+#            - Load ChromaDB back and create retriever
+#    - Validates database created successfully
+#    - If fails, exception caught and returns False
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error in chunking/embedding: {str(e)}")
+        return False
+
+def extract_reference_id(blob_url: str) -> tuple:
+    """Extract and validate reference ID from blob URL.
+    
+    Expected format: reference_id_attachment_filename.ext
+    Example: 19B01AC28683FC05_attachment_SOV - Berkshire.pdf
+    
+    Args:
+        blob_url: Full Azure blob URL
+        
+    Returns:
+        (reference_id, is_valid, filename)
+        is_valid: True if filename contains reference_id_attachment_ pattern
+    """
+    try:
+        # Extract filename from URL
+        path = unquote(urlparse(blob_url).path)
+        file_name_with_ext = os.path.basename(path)
+        
+        # Check for pattern: reference_id_attachment_rest
+        if "_attachment_" in file_name_with_ext:
+            parts = file_name_with_ext.split("_attachment_", 1)
+            reference_id = parts[0]
+            
+            # Validate reference_id is not empty and contains only valid characters
+            if reference_id and all(c.isalnum() or c == "_" for c in reference_id):
+                return reference_id, True, file_name_with_ext
+        
+        # Invalid format
+        return None, False, file_name_with_ext
+        
+    except Exception as e:
+        logger.error(f"Error extracting reference ID from {blob_url}: {str(e)}")
+        return None, False, os.path.basename(unquote(urlparse(blob_url).path))
+
+async def process_query_pdf(blob_urls: List[str], vector_db_path: str = None) -> Dict[str, Any]:
+    """Main processing function that handles the complete pipeline for multiple text files.
+    
+    Downloads raw text files (.txt) from blob storage, chunks them, and creates embeddings.
+    Groups files by reference_id and stores them in separate vector DB folders.
+    Files without valid reference_id format are skipped.
+    """
+    try:
+        # Use VDB_PATH from env if vector_db_path not provided
+        # Always convert to absolute path
+        vector_db_path = vector_db_path or os.getenv("QUERY_VDB_PATH", "/home/Jarvis/rohan/Document_Query_MCP/data/vec_db")
+        vector_db_path = os.path.abspath(vector_db_path)
+        
+        # Group URLs by reference_id
+        urls_by_reference = {}  # {reference_id: [urls]}
+        skipped_files = []      # Files with invalid format
+        
+        for blob_url in blob_urls:
+            reference_id, is_valid, filename = extract_reference_id(blob_url)
+            
+            if is_valid:
+                if reference_id not in urls_by_reference:
+                    urls_by_reference[reference_id] = []
+                urls_by_reference[reference_id].append((blob_url, filename))
+            else:
+                skipped_files.append({
+                    "file_name": filename,
+                    "reason": "Invalid naming format - no reference ID found. Expected format: reference_id_attachment_filename.ext"
+                })
+        
+        # Process each reference_id group
+        file_results = []
+        all_embedded = True
+        reference_ids_processed = []
+        
+        for reference_id, url_filename_pairs in urls_by_reference.items():
+            # Create reference_id-specific vector DB path
+            ref_vector_db_path = os.path.abspath(os.path.join(vector_db_path, reference_id))
+            
+            for blob_url, file_name_with_ext in url_filename_pairs:
+                try:
+                    # Extract file extension from blob URL
+                    file_name, file_ext = os.path.splitext(file_name_with_ext)
+                    file_ext = file_ext.lower()
+                    
+                    # Download file from blob
+                    file_bytes = await query_download_from_blob(blob_url)
+                    
+                    # Extract text based on file extension
+                    if file_ext in (".txt",):
+                        # TXT: decode bytes directly to UTF-8 string
+                        text = query_extract_text_from_txt(file_bytes)
+                    else:
+                        raise ValueError(f"Unsupported file format: {file_ext}. Supported formats: .txt")
+                    
+                    # Create chunks and embeddings in the reference_id-specific vector DB path
+                    is_embedded = query_chunk_and_embed(text, ref_vector_db_path)
+                    
+                    file_results.append({
+                        "file_name": file_name,
+                        "reference_id": reference_id,
+                        "is_embedded": is_embedded,
+                        "error": None if is_embedded else "Failed to create embeddings"
+                    })
+                    
+                    if not is_embedded:
+                        all_embedded = False
+                    
+                    # Track successful reference_id
+                    if reference_id not in reference_ids_processed:
+                        reference_ids_processed.append(reference_id)
+                        
+                except Exception as e:
+                    logger.exception(f"Error processing file from {blob_url}")
+                    file_results.append({
+                        "file_name": os.path.splitext(file_name_with_ext)[0],
+                        "reference_id": reference_id,
+                        "is_embedded": False,
+                        "error": str(e)
+                    })
+                    all_embedded = False
+        
+        # Determine primary vector_db_path for response (first successfully processed reference_id)
+        primary_vector_db_path = None
+        if reference_ids_processed:
+            primary_vector_db_path = os.path.abspath(os.path.join(vector_db_path, reference_ids_processed[0]))
+        
+        return {
+            "is_vectorised": all_embedded and len(file_results) > 0,
+            "metadata": {
+                "is_embedded": all_embedded and len(file_results) > 0,
+                "is_error": not all_embedded or len(file_results) == 0,
+                "error_message": None if (all_embedded and len(file_results) > 0) else "One or more files failed to embed or all files were skipped",
+                "files_processed": file_results,
+                "files_skipped": skipped_files,
+                "vector_db_path": primary_vector_db_path,
+                "reference_ids": reference_ids_processed,
+                "total_files": len(blob_urls),
+                "processed_count": len(file_results),
+                "skipped_count": len(skipped_files)
+            }
+        }
+        
+    except Exception as e:
+        logger.exception("Error processing files")
+        return {
+            "is_vectorised": False,
+            "metadata": {
+                "is_embedded": False,
+                "is_error": True,
+                "error_message": str(e),
+                "vector_db_path": None,
+                "total_files": len(blob_urls) if blob_urls else 0
+            }
+        }
