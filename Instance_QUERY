@@ -1,0 +1,222 @@
+We created one azure container instance which has the one image of the code and the instance is deployed and is working fine and we deployed via the end to end commands as below as
+
+
+#!/bin/bash 
+
+  
+
+echo "=========================================" 
+
+echo "STEP 1: DELETE OLD CONTAINER INSTANCE" 
+
+echo "=========================================" 
+
+  
+
+RESOURCE_GROUP="EA-AZ-DEV-AgenticAI_HI" 
+
+OLD_CONTAINER_NAME="mcp-jarvis" 
+
+  
+
+az container delete \ 
+
+  --resource-group "$RESOURCE_GROUP" \ 
+
+  --name "$OLD_CONTAINER_NAME" \ 
+
+  --yes 
+
+  
+
+echo "✅ Old container deleted" 
+
+  
+
+echo "" 
+
+echo "=========================================" 
+
+echo "STEP 2: BUILD DOCKER IMAGE" 
+
+echo "=========================================" 
+
+  
+
+cd ~/Chinmay/JarvisAgent_2.0/Jarvis/MCP 
+
+  
+
+docker build -t mcp-token:latest . 
+
+  
+
+echo "✅ Image built" 
+
+  
+
+echo "" 
+
+echo "=========================================" 
+
+echo "STEP 3: PUSH TO ACR" 
+
+echo "=========================================" 
+
+  
+
+az acr login --name hexawarejarvisacr 
+
+  
+
+ACR_LOGIN_SERVER="hexawarejarvisacr-cvhcdcdec3chawdg.azurecr.io" 
+
+  
+
+docker tag mcp-token:latest ${ACR_LOGIN_SERVER}/mcp-token:latest 
+
+docker push ${ACR_LOGIN_SERVER}/mcp-token:latest 
+
+  
+
+echo "✅ Image pushed to ACR" 
+
+  
+
+echo "" 
+
+echo "=========================================" 
+
+echo "STEP 4: CREATE CONTAINER INSTANCE (PRIVATE + VNET)" 
+
+echo "=========================================" 
+
+  
+
+RESOURCE_GROUP="EA-AZ-DEV-AgenticAI_HI" 
+
+STORAGE_ACCOUNT="agenticai1" 
+
+CONTAINER_NAME="mcp-jarvis" 
+
+VNET_NAME="Vnet-AgenticAI_HI" 
+
+SUBNET_NAME="Subnet2" 
+
+  
+
+ACR_LOGIN_SERVER="hexawarejarvisacr-cvhcdcdec3chawdg.azurecr.io" 
+
+ACR_USERNAME="HexawareJarvisacr" 
+
+ACR_PASSWORD=$(az acr credential show --name hexawarejarvisacr --query "passwords[0].value" -o tsv) 
+
+  
+
+STORAGE_KEY=$(az storage account keys list \ 
+
+  --resource-group "$RESOURCE_GROUP" \ 
+
+  --account-name "$STORAGE_ACCOUNT" \ 
+
+  --query "[0].value" -o tsv) 
+
+  
+
+az container create \ 
+
+  --resource-group "$RESOURCE_GROUP" \ 
+
+  --name "$CONTAINER_NAME" \ 
+
+  --image "${ACR_LOGIN_SERVER}/mcp-token:latest" \ 
+
+  --registry-login-server "$ACR_LOGIN_SERVER" \ 
+
+  --registry-username "$ACR_USERNAME" \ 
+
+  --registry-password "$ACR_PASSWORD" \ 
+
+  --os-type Linux \ 
+
+  --ports 8658 \ 
+
+  --cpu 1 \ 
+
+  --memory 2 \ 
+
+  --environment-variables \ 
+
+    GMAIL_TOKEN_PATH="/MCP/data/token.pickle" \ 
+
+    CREDENTIALS_PATH="/MCP/credentials" \ 
+
+  --azure-file-volume-mount-path /MCP/data \ 
+
+  --azure-file-volume-account-name "$STORAGE_ACCOUNT" \ 
+
+  --azure-file-volume-account-key "$STORAGE_KEY" \ 
+
+  --azure-file-volume-share-name gmail-tokens \ 
+
+  --vnet "$VNET_NAME" \ 
+
+  --subnet "$SUBNET_NAME" 
+
+  
+
+echo "✅ Container deployment initiated" 
+
+sleep 15 
+
+  
+
+echo "" 
+
+echo "=========================================" 
+
+echo "STEP 5: VERIFY DEPLOYMENT" 
+
+echo "=========================================" 
+
+  
+
+PRIVATE_IP=$(az container show \ 
+
+  --resource-group "$RESOURCE_GROUP" \ 
+
+  --name "$CONTAINER_NAME" \ 
+
+  --query "ipAddress.ip" -o tsv) 
+
+  
+
+echo "Container IP (Private): $PRIVATE_IP" 
+
+  
+
+az container exec \ 
+
+  --resource-group "$RESOURCE_GROUP" \ 
+
+  --name "$CONTAINER_NAME" \ 
+
+  --exec-command "ls -lah /MCP/data/token.pickle" 
+
+  
+
+echo "" 
+
+echo "=========================================" 
+
+echo "✅ DEPLOYMENT COMPLETE!" 
+
+echo "=========================================" 
+
+echo "API Docs: http://${PRIVATE_IP}:8658/api/v1/email_intent_agent/docs" 
+
+echo "Note: Access only from within the VNet" 
+
+ 
+
+So via above commands this got deployed successfully on this above instance under VNET and subnet now if I made some changes in code let's say 2-3 days back now the updated code again in the same instance I want to push without deleting the instance as the IP address will change if we create again a new instance on azure so how to upload or push the updated image from docker via CLI to this same deployed instance is there any way to do so ??
